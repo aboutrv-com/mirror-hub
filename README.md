@@ -57,12 +57,22 @@ still can't be pushed is skipped with a warning rather than failing the sync.
 **HTTP/1.1 for pushes.** Forcing HTTP/1.1 avoids sporadic HTTP/2 500s that
 GitHub returns on large ref-update batches.
 
+**Fallback source + backoff for fetches.** sourceware.org frequently answers
+`HTTP 429` when a matrix run cold-clones several of its repos at once. Each
+mirror may list an optional fallback URL (3rd column in `mirrors.txt`) — usually
+a `git://` URL for the same repo, whose daemon (port 9418) doesn't share the
+HTTPS rate limiter. The fetch step retries each URL with exponential backoff
+(30s/60s/120s) before falling through to the fallback; if all fail, the mirror
+is skipped and retried next run.
+
 **Incremental by default.** The bare clone lives in the Actions cache and is
 updated in place; a full clone happens only on a cache miss.
 
 ## Adding a mirror
 
-Add one line to `mirrors.txt`, commit, and push. The destination repo is
+Add one line to `mirrors.txt` (`<source-url> <owner/name> [fallback-url]`),
+commit, and push. The optional 3rd column is a fallback source URL (e.g. a
+`git://` URL) used when the primary keeps failing. The destination repo is
 created on the next sync. To stop mirroring, delete the line (the destination
 repo is left untouched — delete it manually if you want).
 

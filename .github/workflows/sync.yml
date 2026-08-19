@@ -20,10 +20,12 @@ jobs:
       - id: gen
         run: |
           set -euo pipefail
+          # Columns: src dst [fallback]. Collapse runs of whitespace to a
+          # single space so jq can split cleanly; fallback is optional.
           matrix=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' mirrors.txt \
-            | awk '{print $1, $2}' \
+            | awk '{print $1, $2, $3}' \
             | jq -R -s -c 'split("\n") | map(select(length>0))
-                | map(split(" ") | {src: .[0], dst: .[1]})
+                | map(split(" ") | {src: .[0], dst: .[1], fallback: (.[2] // "")})
                 | {include: .}')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "Parsed matrix: $matrix"
@@ -49,15 +51,51 @@ jobs:
           restore-keys: mirror-${{ steps.slug.outputs.s }}-
 
       - name: Fetch from source
+        shell: bash
+        env:
+          SRC: ${{ matrix.src }}
+          FALLBACK: ${{ matrix.fallback }}
         run: |
-          set -euo pipefail
-          if [ -d repo.git ]; then
-            echo "Cache hit — incremental fetch of ${{ matrix.src }}"
-            git -C repo.git remote update --prune
-          else
-            echo "Cache miss — fresh mirror clone of ${{ matrix.src }} (slow first run)"
-            git clone --mirror "${{ matrix.src }}" repo.git
-          fi
+          set -uo pipefail
+          # Candidate URLs for the SAME repo, tried in order. The fallback
+          # (e.g. git://) exists because sourceware.org HTTP frequently returns
+          # 429 under the concurrent cold clones of a matrix run; the git daemon
+          # (port 9418) doesn't share that HTTPS rate limiter.
+          urls=("$SRC"); [ -n "$FALLBACK" ] && urls+=("$FALLBACK")
+
+          # One fetch attempt against a given URL. Incremental if the cache is
+          # warm, otherwise a fresh mirror clone. On the incremental path we
+          # retarget the remote to $1 so a fallback URL is actually used.
+          try_fetch() {   # $1 = url
+            if [ -d repo.git ]; then
+              echo "Cache hit — incremental fetch from $1"
+              git -C repo.git remote set-url origin "$1"
+              git -C repo.git remote update --prune
+            else
+              echo "Cache miss — fresh mirror clone from $1 (slow first run)"
+              git clone --mirror "$1" repo.git
+            fi
+          }
+
+          # Try each URL with exponential backoff (30s/60s/120s) — backoff is
+          # what actually clears a 429, protocol switch is the second lever.
+          for url in "${urls[@]}"; do
+            n=0
+            while :; do
+              if try_fetch "$url"; then
+                echo "Fetch OK from $url"; exit 0
+              fi
+              # A failed clone can leave a partial repo.git that would make the
+              # next attempt take the (wrong) incremental path — clear it.
+              [ -d repo.git ] && ! git -C repo.git rev-parse --git-dir >/dev/null 2>&1 && rm -rf repo.git
+              n=$((n+1))
+              [ "$n" -ge 3 ] && { echo "::warning::$url failed after $n attempts"; break; }
+              d=$((30 * (1 << (n-1))))   # 30, 60, 120
+              echo "$url attempt $n failed, retry in ${d}s..."; sleep "$d"
+            done
+          done
+          echo "::error::all sources failed for ${{ matrix.dst }} — will retry next run"
+          exit 1
 
       # Minted AFTER the (potentially long) clone/fetch, so the token's ~1h
       # lifetime is reserved entirely for the steps that use it (create repo,

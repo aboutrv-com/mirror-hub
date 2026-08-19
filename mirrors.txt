@@ -1,17 +1,24 @@
 # Mirror configuration — one repo per line, "#" starts a comment.
 #
-# Format:   <source-git-url>   <destination owner/name>
+# Format:   <source-url>   <destination owner/name>   [fallback-url]
 #
-# - source-git-url : upstream repo to pull from (read-only, https)
-# - destination    : GitHub repo to push into; created automatically if missing.
-#                    Must live under an owner your GitHub App is installed on.
+# - source-url   : upstream repo to pull from (read-only). Tried first.
+# - destination  : GitHub repo to push into; created automatically if missing.
+#                  Must live under an owner your GitHub App is installed on.
+# - fallback-url : OPTIONAL. Tried if the source-url fetch keeps failing
+#                  (e.g. sourceware.org HTTP 429 rate-limiting). A different
+#                  protocol/host for the SAME repo — commonly a git:// URL,
+#                  whose daemon (port 9418) doesn't share the HTTPS limiter.
+#
+# Each URL is retried with exponential backoff before falling through to the
+# next; if all URLs fail, the mirror is skipped and retried on the next run.
 #
 # Add a mirror = add a line. Remove a mirror = delete its line
 # (the destination repo is left untouched; delete it manually if you want).
 
 https://git.savannah.gnu.org/git/dejagnu.git      aboutrv-com/dejagnu
-https://sourceware.org/git/binutils-gdb.git        aboutrv-com/binutils-gdb
-https://sourceware.org/git/glibc.git               aboutrv-com/glibc
-https://sourceware.org/git/newlib-cygwin.git       aboutrv-com/newlib-cygwin
+https://sourceware.org/git/binutils-gdb.git        aboutrv-com/binutils-gdb      git://sourceware.org/git/binutils-gdb.git
+https://sourceware.org/git/glibc.git               aboutrv-com/glibc             git://sourceware.org/git/glibc.git
+https://sourceware.org/git/newlib-cygwin.git       aboutrv-com/newlib-cygwin     git://sourceware.org/git/newlib-cygwin.git
 https://git.musl-libc.org/git/musl                 aboutrv-com/musl
-https://gcc.gnu.org/git/gcc.git                     aboutrv-com/gcc
+https://gcc.gnu.org/git/gcc.git                     aboutrv-com/gcc               git://gcc.gnu.org/git/gcc.git
