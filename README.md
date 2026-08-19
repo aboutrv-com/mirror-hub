@@ -67,6 +67,15 @@ destination repo (`PUT /repos/{dst}/actions/permissions {enabled:false}`,
 idempotent, run every sync). The workflow files exist as inert copies — the
 mirror is exact, but it never executes upstream CI or burns our Actions minutes.
 
+**No native "mirror" badge.** GitHub's "mirror of &lt;url&gt;" label under a repo
+name is driven by a read-only `mirror_url` field, set only by GitHub's internal
+importer — there's no API or settings page to set it on a repo we push to
+ourselves. The closest self-serve signal is repo topics, so the sync step tags
+each destination with `mirror` + `unofficial-mirror` (`PUT /repos/{dst}/topics`,
+idempotent, run every sync) alongside the destination's `Unofficial mirror of …`
+description. We never write our own files into a destination — it stays an exact
+copy of upstream — so the mirror signal lives in metadata, not in the tree.
+
 **HTTP/1.1 for pushes.** Forcing HTTP/1.1 avoids sporadic HTTP/2 500s that
 GitHub returns on large ref-update batches.
 

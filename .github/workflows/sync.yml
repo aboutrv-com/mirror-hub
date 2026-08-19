@@ -147,6 +147,15 @@ jobs:
           echo "Ensuring Actions are disabled on ${{ matrix.dst }} (mirror must not run upstream CI)"
           gh api -X PUT "repos/${{ matrix.dst }}/actions/permissions" \
             -F enabled=false >/dev/null
+          # GitHub's native "Public mirror" badge is driven by a read-only
+          # mirror_url field we can't set (it belongs to GitHub's internal
+          # importer). The closest self-serve signal is repo topics, which show
+          # under the repo name. Set them so visitors see this is an unofficial
+          # mirror. This PUT replaces the whole topic set, so it's idempotent and
+          # safe to run every sync (also backfills repos created earlier).
+          echo "Tagging ${{ matrix.dst }} with mirror topics"
+          gh api -X PUT "repos/${{ matrix.dst }}/topics" \
+            -f "names[]=mirror" -f "names[]=unofficial-mirror" >/dev/null
 
       - name: Push mirror (branches + tags, pruned)
         env:
