@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '17 3 * * *'   # daily at 03:17 UTC, off-peak
   workflow_dispatch:        # manual "Run workflow" button
+    inputs:
+      debug:
+        description: "Verbose git tracing (GIT_TRACE + GIT_CURL_VERBOSE)"
+        type: boolean
+        default: false
 
 concurrency:
   group: mirror-sync
@@ -129,6 +134,24 @@ jobs:
           url="https://x-access-token:${GH_TOKEN}@github.com/${{ matrix.dst }}.git"
           GIT="git -C repo.git -c http.version=HTTP/1.1"
 
+          # Visibility: --progress forces git to emit transfer progress even
+          # though CI stderr is not a TTY (it's otherwise auto-suppressed). The
+          # optional debug toggle turns on full git/curl tracing. We NEVER echo
+          # $url (it embeds the token) — git's own output uses the clean remote.
+          PROGRESS="--progress"
+          if [ "${{ inputs.debug }}" = "true" ]; then
+            # GIT_TRACE alone is safe. We deliberately do NOT set
+            # GIT_CURL_VERBOSE — it dumps HTTP headers including the
+            # Authorization bearer token into the public log.
+            export GIT_TRACE=1
+            echo "::notice::debug tracing enabled (GIT_TRACE)"
+          fi
+          # How many refs are we about to push? Gives the per-ref loop a
+          # denominator so progress reads "42/930" instead of silence.
+          n_heads=$($GIT for-each-ref --format='x' refs/heads | wc -l | tr -d ' ')
+          n_tags=$($GIT for-each-ref --format='x' refs/tags | wc -l | tr -d ' ')
+          echo "Mirroring ${{ matrix.dst }}: $n_heads branches, $n_tags tags"
+
           # We push refs/heads/* and refs/tags/* (not --mirror: some upstreams
           # carry non-standard refs like refs/remotes/*). --force is required for
           # true mirror semantics: tags are immutable to a normal push, so once a
@@ -145,12 +168,18 @@ jobs:
           # daily batch path handles pruning on healthy syncs.)
           fsck_err='fsck|invalid author|invalid committer|missingSpaceBeforeDate|unpack failed'
 
-          push_per_ref() {   # $1 = namespace, e.g. refs/heads
-            local ref pushed=0 salvaged=0 skipped=0 tgt
+          push_per_ref() {   # $1 = namespace, $2 = total count for progress
+            local ref pushed=0 salvaged=0 skipped=0 done=0 total="$2" tgt err
             while read -r ref; do
               [ -z "$ref" ] && continue
-              if $GIT push --force "$url" "$ref:$ref" >/dev/null 2>&1; then
-                pushed=$((pushed+1)); continue
+              done=$((done+1))
+              # Capture stderr so a failure shows WHY, instead of vanishing into
+              # /dev/null. On success we stay quiet (one summary line at the end)
+              # but print a heartbeat every 100 refs so long tag runs aren't dark.
+              if err=$($GIT push --force "$url" "$ref:$ref" 2>&1); then
+                pushed=$((pushed+1))
+                [ $((done % 100)) -eq 0 ] && echo "  ...$done/$total pushed"
+                continue
               fi
               # A rejected annotated tag often has a broken tag shell (bad tagger
               # line) wrapping a healthy commit. Salvage it as a lightweight tag
@@ -162,33 +191,44 @@ jobs:
                 echo "::warning::$ref had a malformed tag object — mirrored as lightweight tag"
                 salvaged=$((salvaged+1))
               else
-                echo "::warning::remote rejected $ref (unrecoverable fsck) — skipped"
+                # Show the first line of the real rejection reason.
+                echo "::warning::remote rejected $ref — skipped: $(echo "$err" | grep -iE 'error|reject|fatal|fsck' | head -1)"
                 skipped=$((skipped+1))
               fi
             done < <($GIT for-each-ref --format='%(refname)' "$1")
-            echo "$1: pushed=$pushed salvaged=$salvaged skipped=$skipped"
+            echo "$1: pushed=$pushed salvaged=$salvaged skipped=$skipped (of $total)"
           }
 
-          sync_ns() {        # $1 = refspec, $2 = namespace
-            local out n=0
+          sync_ns() {        # $1 = refspec, $2 = namespace, $3 = ref count
+            local n=0 log rc
+            log=$(mktemp)
             while :; do
-              if out=$($GIT push --prune --force "$url" "$1" 2>&1); then
-                echo "$out"; echo "$2: batch push OK"; return 0
+              # Full output -> $log (for fsck grep). Displayed stream is
+              # throttled so a big push is a heartbeat, not a flood: split
+              # git's \r progress refreshes into lines, then show only every
+              # 40th progress line while ALWAYS passing through real messages
+              # (remote:, errors, "Writing objects" 100%, summaries).
+              $GIT push $PROGRESS --prune --force "$url" "$1" 2>&1 \
+                | tee "$log" \
+                | tr '\r' '\n' \
+                | awk '/[0-9]+%/ { c++; if (c % 40 == 0 || /100%/) print "  "$0; next } { print }'
+              rc=${PIPESTATUS[0]}
+              if [ "$rc" -eq 0 ]; then
+                echo "$2: batch push OK ($3 refs)"; rm -f "$log"; return 0
               fi
-              echo "$out"
-              if echo "$out" | grep -qiE "$fsck_err"; then
+              if grep -qiE "$fsck_err" "$log"; then
                 echo "$2: bad objects in pack — switching to per-ref"
-                push_per_ref "$2"; return 0
+                push_per_ref "$2" "$3"; rm -f "$log"; return 0
               fi
               n=$((n+1))
-              [ "$n" -ge 3 ] && { echo "::error::$2 push failed after $n tries"; return 1; }
+              [ "$n" -ge 3 ] && { echo "::error::$2 push failed after $n tries"; rm -f "$log"; return 1; }
               echo "$2 push attempt $n failed, retry in $((n*15))s..."; sleep $((n*15))
             done
           }
 
           rc=0
-          sync_ns 'refs/heads/*:refs/heads/*' refs/heads || rc=1
-          sync_ns 'refs/tags/*:refs/tags/*'   refs/tags  || rc=1
+          sync_ns 'refs/heads/*:refs/heads/*' refs/heads "$n_heads" || rc=1
+          sync_ns 'refs/tags/*:refs/tags/*'   refs/tags  "$n_tags"  || rc=1
           exit $rc
 
       - name: Sync default branch to match upstream HEAD

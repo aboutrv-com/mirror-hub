@@ -68,6 +68,15 @@ is skipped and retried next run.
 **Incremental by default.** The bare clone lives in the Actions cache and is
 updated in place; a full clone happens only on a cache miss.
 
+**Observable pushes.** Large pushes (gcc, glibc) used to run silently for
+minutes because output was buffered until completion. Now the push streams
+live: `git --progress` transfer heartbeat is throttled to a periodic line (not
+a per-object flood), the per-ref fallback prints a `N/total` heartbeat every
+100 refs and the real rejection reason on failure, and each namespace ends with
+a `pushed / salvaged / skipped` summary. The manual run has a **debug** toggle
+that enables `GIT_TRACE` (kept off by default; `GIT_CURL_VERBOSE` is never used
+because it would leak the auth token into the log).
+
 ## Adding a mirror
 
 Add one line to `mirrors.txt` (`<source-url> <owner/name> [fallback-url]`),
