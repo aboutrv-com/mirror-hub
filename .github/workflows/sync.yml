@@ -156,6 +156,12 @@ jobs:
           echo "Tagging ${{ matrix.dst }} with mirror topics"
           gh api -X PUT "repos/${{ matrix.dst }}/topics" \
             -f "names[]=mirror" -f "names[]=unofficial-mirror" >/dev/null
+          # Point the repo's "Website" field (homepage) at the upstream source
+          # URL, so the About box shows a clickable link back to the real repo
+          # (the description text isn't a link). Idempotent PATCH, run every sync.
+          echo "Setting homepage to upstream source ${{ matrix.src }}"
+          gh api -X PATCH "repos/${{ matrix.dst }}" \
+            -f "homepage=${{ matrix.src }}" >/dev/null
 
       - name: Push mirror (branches + tags, pruned)
         env:
