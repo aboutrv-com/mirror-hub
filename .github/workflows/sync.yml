@@ -5,8 +5,12 @@ on:
     - cron: '17 3 * * *'   # daily at 03:17 UTC, off-peak
   workflow_dispatch:        # manual "Run workflow" button
     inputs:
+      only:
+        description: "Run only mirrors whose src/dst contains this text (blank = all)"
+        type: string
+        default: ""
       debug:
-        description: "Verbose git tracing (GIT_TRACE + GIT_CURL_VERBOSE)"
+        description: "Verbose git tracing (GIT_TRACE)"
         type: boolean
         default: false
 
@@ -23,17 +27,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: gen
+        env:
+          ONLY: ${{ inputs.only }}
         run: |
           set -euo pipefail
           # Columns: src dst [fallback]. Collapse runs of whitespace to a
           # single space so jq can split cleanly; fallback is optional.
-          matrix=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' mirrors.txt \
-            | awk '{print $1, $2, $3}' \
+          # A manual run may pass `only` to filter to matching mirrors (substring
+          # match on the whole line) — handy for debugging one repo in isolation.
+          lines=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' mirrors.txt)
+          if [ -n "$ONLY" ]; then
+            # Substring filter. grep exiting 1 (no match) is fine here — we
+            # want an empty result, not a fallthrough to all lines.
+            lines=$(printf '%s\n' "$lines" | grep -F "$ONLY" || true)
+          fi
+          matrix=$(printf '%s\n' "$lines" \
+            | awk 'NF {print $1, $2, $3}' \
             | jq -R -s -c 'split("\n") | map(select(length>0))
                 | map(split(" ") | {src: .[0], dst: .[1], fallback: (.[2] // "")})
                 | {include: .}')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "Parsed matrix: $matrix"
+          echo "Parsed matrix (only='$ONLY'): $matrix"
 
   # One independent job per mirror; a failure in one does not affect others.
   sync:
