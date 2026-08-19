@@ -54,6 +54,19 @@ pointing at the same (healthy) commit. The ref still mirrors and points to the
 right revision; only the tag's own message/signature is dropped. A ref that
 still can't be pushed is skipped with a warning rather than failing the sync.
 
+**Mirroring workflow files.** Upstreams often keep their own
+`.github/workflows/*.yml` on some branches (gcc's `devel/rust/master`,
+newlib-cygwin's `main`/`master`/`topic/*`). GitHub refuses to let an App token
+push any commit that creates or updates a file under `.github/workflows/`
+*unless the App has the **Workflows: write** permission* — and one rejected ref
+fails the whole batch push (it's not an fsck error, so the per-ref salvage path
+doesn't catch it; the batch just retries and dies). So the App must be granted
+**Workflows: Read and write** (see setup). To make sure those mirrored workflow
+files never actually *run* in our copy, the sync step disables Actions on every
+destination repo (`PUT /repos/{dst}/actions/permissions {enabled:false}`,
+idempotent, run every sync). The workflow files exist as inert copies — the
+mirror is exact, but it never executes upstream CI or burns our Actions minutes.
+
 **HTTP/1.1 for pushes.** Forcing HTTP/1.1 avoids sporadic HTTP/2 500s that
 GitHub returns on large ref-update batches.
 
@@ -101,8 +114,15 @@ The schedule is daily (`17 3 * * *`, off-peak UTC). Daily is deliberate:
 1. **Create a GitHub App** (owner: the account/org that will host the mirrors).
    Repository permissions:
    - Contents: **Read and write**
-   - Administration: **Read and write** (to auto-create destination repos)
+   - Administration: **Read and write** (to auto-create destination repos and
+     disable Actions on them)
+   - Workflows: **Read and write** (upstreams carry `.github/workflows/*.yml` on
+     some branches; without this, GitHub rejects those refs and the push fails)
    - Metadata: **Read-only**
+
+   Changing an already-installed App's permissions requires re-approval: the
+   owner must approve the new permission in the org/account's installed-Apps
+   settings, or the added scope stays inactive.
 
    For an organization owner, also grant **Organization → Administration:
    Read and write**, otherwise repo auto-creation fails with

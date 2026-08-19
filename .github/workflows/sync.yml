@@ -138,6 +138,15 @@ jobs:
             gh repo create "${{ matrix.dst }}" --public \
               --description "Unofficial mirror of ${{ matrix.src }} — not affiliated with upstream"
           fi
+          # Mirrored upstreams carry their own .github/workflows/*.yml. We push
+          # those verbatim (the App has workflows:write), but they are NOT ours to
+          # run — a mirror must never execute upstream CI. Disable Actions on the
+          # destination so the workflow files exist as inert copies and never burn
+          # our minutes or fire on push. This PUT is idempotent, so we run it every
+          # sync: it also covers repos created before this step existed.
+          echo "Ensuring Actions are disabled on ${{ matrix.dst }} (mirror must not run upstream CI)"
+          gh api -X PUT "repos/${{ matrix.dst }}/actions/permissions" \
+            -F enabled=false >/dev/null
 
       - name: Push mirror (branches + tags, pruned)
         env:
