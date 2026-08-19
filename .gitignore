@@ -1,0 +1,5 @@
+# Local mirror clones created during runs — never commit these.
+repo.git/
+*.pem
+# Local-only deployment notes (account/secret references) — never commit.
+SETUP.local.md

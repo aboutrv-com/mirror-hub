@@ -1,0 +1,17 @@
+# Mirror configuration — one repo per line, "#" starts a comment.
+#
+# Format:   <source-git-url>   <destination owner/name>
+#
+# - source-git-url : upstream repo to pull from (read-only, https)
+# - destination    : GitHub repo to push into; created automatically if missing.
+#                    Must live under an owner your GitHub App is installed on.
+#
+# Add a mirror = add a line. Remove a mirror = delete its line
+# (the destination repo is left untouched; delete it manually if you want).
+
+https://git.savannah.gnu.org/git/dejagnu.git      aboutrv-com/dejagnu
+https://sourceware.org/git/binutils-gdb.git        aboutrv-com/binutils-gdb
+https://sourceware.org/git/glibc.git               aboutrv-com/glibc
+https://sourceware.org/git/newlib-cygwin.git       aboutrv-com/newlib-cygwin
+https://git.musl-libc.org/git/musl                 aboutrv-com/musl
+https://gcc.gnu.org/git/gcc.git                     aboutrv-com/gcc

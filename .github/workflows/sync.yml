@@ -1,0 +1,178 @@
+name: Mirror sync
+
+on:
+  schedule:
+    - cron: '17 3 * * *'   # daily at 03:17 UTC, off-peak
+  workflow_dispatch:        # manual "Run workflow" button
+
+concurrency:
+  group: mirror-sync
+  cancel-in-progress: false
+
+jobs:
+  # Read mirrors.txt and turn it into a job matrix.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: gen
+        run: |
+          set -euo pipefail
+          matrix=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' mirrors.txt \
+            | awk '{print $1, $2}' \
+            | jq -R -s -c 'split("\n") | map(select(length>0))
+                | map(split(" ") | {src: .[0], dst: .[1]})
+                | {include: .}')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Parsed matrix: $matrix"
+
+  # One independent job per mirror; a failure in one does not affect others.
+  sync:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    timeout-minutes: 120
+    steps:
+      - name: Compute cache slug
+        id: slug
+        run: echo "s=$(echo '${{ matrix.dst }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore mirror cache
+        uses: actions/cache@v6
+        with:
+          path: repo.git
+          key: mirror-${{ steps.slug.outputs.s }}-${{ github.run_id }}
+          restore-keys: mirror-${{ steps.slug.outputs.s }}-
+
+      - name: Fetch from source
+        run: |
+          set -euo pipefail
+          if [ -d repo.git ]; then
+            echo "Cache hit — incremental fetch of ${{ matrix.src }}"
+            git -C repo.git remote update --prune
+          else
+            echo "Cache miss — fresh mirror clone of ${{ matrix.src }} (slow first run)"
+            git clone --mirror "${{ matrix.src }}" repo.git
+          fi
+
+      # Minted AFTER the (potentially long) clone/fetch, so the token's ~1h
+      # lifetime is reserved entirely for the steps that use it (create repo,
+      # push, default-branch). A slow cold clone of a large repo (gcc/glibc)
+      # can otherwise outlast a token minted up front, causing a 401 on push.
+      - name: Generate installation token
+        id: token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.MIRROR_CLIENT_ID }}
+          private-key: ${{ secrets.MIRROR_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Ensure destination repo exists
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          if ! gh repo view "${{ matrix.dst }}" >/dev/null 2>&1; then
+            echo "Creating ${{ matrix.dst }}"
+            gh repo create "${{ matrix.dst }}" --public \
+              --description "Unofficial mirror of ${{ matrix.src }} — not affiliated with upstream"
+          fi
+
+      - name: Push mirror (branches + tags, pruned)
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          url="https://x-access-token:${GH_TOKEN}@github.com/${{ matrix.dst }}.git"
+          GIT="git -C repo.git -c http.version=HTTP/1.1"
+
+          # We push refs/heads/* and refs/tags/* (not --mirror: some upstreams
+          # carry non-standard refs like refs/remotes/*). --force is required for
+          # true mirror semantics: tags are immutable to a normal push, so once a
+          # tag exists on the remote git refuses to update it ("already exists");
+          # --force makes the destination track upstream exactly (also follows
+          # upstream branch force-pushes/rebases). HTTP/1.1 avoids sporadic
+          # HTTP/2 500s on large ref batches.
+          #
+          # Old imported repos (CVS-era: dejagnu, binutils-gdb) can contain
+          # malformed objects (e.g. a tagger line with no date). GitHub enforces
+          # receive.fsckObjects and rejects the WHOLE pack, so one bad object
+          # fails every ref. When we detect that, fall back to per-ref pushes and
+          # skip only the refs the remote refuses. (Per-ref loses --prune; the
+          # daily batch path handles pruning on healthy syncs.)
+          fsck_err='fsck|invalid author|invalid committer|missingSpaceBeforeDate|unpack failed'
+
+          push_per_ref() {   # $1 = namespace, e.g. refs/heads
+            local ref pushed=0 salvaged=0 skipped=0 tgt
+            while read -r ref; do
+              [ -z "$ref" ] && continue
+              if $GIT push --force "$url" "$ref:$ref" >/dev/null 2>&1; then
+                pushed=$((pushed+1)); continue
+              fi
+              # A rejected annotated tag often has a broken tag shell (bad tagger
+              # line) wrapping a healthy commit. Salvage it as a lightweight tag
+              # pointing at that commit — the ref survives and still points to the
+              # right revision; only the tag's own message/signature is dropped.
+              if [ "${ref#refs/tags/}" != "$ref" ] \
+                 && tgt=$($GIT rev-parse --verify -q "$ref^{commit}") \
+                 && $GIT push --force "$url" "$tgt:$ref" >/dev/null 2>&1; then
+                echo "::warning::$ref had a malformed tag object — mirrored as lightweight tag"
+                salvaged=$((salvaged+1))
+              else
+                echo "::warning::remote rejected $ref (unrecoverable fsck) — skipped"
+                skipped=$((skipped+1))
+              fi
+            done < <($GIT for-each-ref --format='%(refname)' "$1")
+            echo "$1: pushed=$pushed salvaged=$salvaged skipped=$skipped"
+          }
+
+          sync_ns() {        # $1 = refspec, $2 = namespace
+            local out n=0
+            while :; do
+              if out=$($GIT push --prune --force "$url" "$1" 2>&1); then
+                echo "$out"; echo "$2: batch push OK"; return 0
+              fi
+              echo "$out"
+              if echo "$out" | grep -qiE "$fsck_err"; then
+                echo "$2: bad objects in pack — switching to per-ref"
+                push_per_ref "$2"; return 0
+              fi
+              n=$((n+1))
+              [ "$n" -ge 3 ] && { echo "::error::$2 push failed after $n tries"; return 1; }
+              echo "$2 push attempt $n failed, retry in $((n*15))s..."; sleep $((n*15))
+            done
+          }
+
+          rc=0
+          sync_ns 'refs/heads/*:refs/heads/*' refs/heads || rc=1
+          sync_ns 'refs/tags/*:refs/tags/*'   refs/tags  || rc=1
+          exit $rc
+
+      - name: Sync default branch to match upstream HEAD
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # Upstream HEAD is the source of truth for the default branch. Without
+          # this, a freshly created repo defaults to whichever branch GitHub saw
+          # first on push (e.g. PR44602), which is wrong. Runs after the push so
+          # the target branch is guaranteed to exist on the remote.
+          head_branch=$(git -C repo.git symbolic-ref --short HEAD 2>/dev/null || true)
+          if [ -z "$head_branch" ]; then
+            echo "No upstream HEAD branch detected — leaving default as-is."
+            exit 0
+          fi
+          current=$(gh repo view "${{ matrix.dst }}" --json defaultBranchRef \
+            --jq '.defaultBranchRef.name' 2>/dev/null || true)
+          if [ "$current" = "$head_branch" ]; then
+            echo "Default branch already '$head_branch'."
+          else
+            echo "Setting default branch: '$current' -> '$head_branch'"
+            gh api -X PATCH "repos/${{ matrix.dst }}" -f "default_branch=$head_branch" >/dev/null
+            echo "Default branch set to $head_branch"
+          fi
