@@ -1,0 +1,9 @@
+# Scheduled Workflow Activity Logs
+
+This directory records sync activity to keep scheduled workflows enabled.
+GitHub disables scheduled workflows after 60 days of repository inactivity.
+
+## Files
+
+- `sync-history.log`: Append-only log of all scheduled sync runs (success/failure)
+- `last-sync.txt`: Timestamp of the most recent scheduled sync

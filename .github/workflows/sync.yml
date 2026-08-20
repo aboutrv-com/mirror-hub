@@ -296,3 +296,51 @@ jobs:
             gh api -X PATCH "repos/${{ matrix.dst }}" -f "default_branch=$head_branch" >/dev/null
             echo "Default branch set to $head_branch"
           fi
+
+  # Keep the workflow alive by committing activity after all mirrors sync.
+  # GitHub disables scheduled workflows after 60 days of no repo commits.
+  keep-alive:
+    needs: sync
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Record sync activity
+        env:
+          SYNC_RESULT: ${{ needs.sync.result }}
+        run: |
+          set -euo pipefail
+          mkdir -p .github/activity
+
+          # Count total mirrors from the workflow matrix
+          total=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' mirrors.txt | wc -l)
+
+          # Determine overall status icon
+          case "$SYNC_RESULT" in
+            success) status="✓" ;;
+            failure) status="✗" ;;
+            cancelled) status="⊗" ;;
+            skipped) status="⊘" ;;
+            *) status="?" ;;
+          esac
+
+          # Append to sync history log
+          timestamp=$(date -u '+%Y-%m-%d %H:%M UTC')
+          echo "$timestamp | Mirrors: $total | Status: $status ($SYNC_RESULT)" >> .github/activity/sync-history.log
+
+          # Also update last-sync timestamp for quick reference
+          echo "$timestamp" > .github/activity/last-sync.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/activity/
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: record scheduled sync $status [skip ci]"
+            git push
+            echo "Sync activity recorded to keep scheduled workflow alive"
+          fi
