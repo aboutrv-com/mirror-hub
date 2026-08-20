@@ -53,6 +53,11 @@ jobs:
   sync:
     needs: prepare
     runs-on: ubuntu-latest
+    # actions: write lets the prune step delete this mirror's stale caches
+    # via the GITHUB_TOKEN. The clone/push to destination repos uses a
+    # separately minted App token, not this one.
+    permissions:
+      actions: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
@@ -296,6 +301,28 @@ jobs:
             gh api -X PATCH "repos/${{ matrix.dst }}" -f "default_branch=$head_branch" >/dev/null
             echo "Default branch set to $head_branch"
           fi
+
+      # The cache key embeds github.run_id, so every run mints a fresh cache
+      # and the old ones are never overwritten — left unchecked they pile up
+      # and blow past the 10 GB repo limit, which triggers LRU eviction that
+      # can drop a small repo's only valid cache. Prune every cache for THIS
+      # mirror except the one this run just saved, keeping exactly one copy
+      # per mirror. Runs on always() so a failed sync still cleans up.
+      - name: Prune old caches for this mirror
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREFIX: mirror-${{ steps.slug.outputs.s }}-
+          KEEP: mirror-${{ steps.slug.outputs.s }}-${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          gh api --paginate "repos/${{ github.repository }}/actions/caches" \
+            --jq ".actions_caches[] | select(.key | startswith(\"$PREFIX\")) | select(.key != \"$KEEP\") | .id" \
+          | while read -r id; do
+              [ -n "$id" ] || continue
+              echo "Deleting stale cache id=$id"
+              gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id" >/dev/null || true
+            done
 
   # Keep the workflow alive by committing activity after all mirrors sync.
   # GitHub disables scheduled workflows after 60 days of no repo commits.
