@@ -102,11 +102,13 @@ ourselves. The closest self-serve signal is repo topics, so the sync step tags
 each destination with `mirror` + `unofficial-mirror` (`PUT /repos/{dst}/topics`,
 idempotent, run every sync), sets the repo's Website field (`homepage`) to the
 upstream source URL so the About box links back to the real repo, and sets a
-description that names this project as the automated maintainer instead of
-repeating the homepage URL (`Unofficial mirror · auto-synced by
-github.com/<owner>/<repo> · not affiliated with upstream`). The homepage and
-description PATCH is idempotent and runs every sync, so existing mirrors are
-backfilled with the current wording. We never write our own files into a
+description that names this project as the automated maintainer
+(`Unofficial mirror · auto-synced by https://github.com/<owner>/<repo> · not
+affiliated with upstream`). The maintainer URL keeps its `https://` scheme
+because the About box autolinks full URLs in the description — so it renders as
+a clickable link back to this hub, in addition to the upstream Website link.
+The homepage and description PATCH is idempotent and runs every sync, so
+existing mirrors are backfilled with the current wording. We never write our own files into a
 destination — it stays an exact copy of upstream — so the mirror signal lives in
 metadata, not in the tree.
 
