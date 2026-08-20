@@ -136,7 +136,7 @@ jobs:
           if ! gh repo view "${{ matrix.dst }}" >/dev/null 2>&1; then
             echo "Creating ${{ matrix.dst }}"
             gh repo create "${{ matrix.dst }}" --public \
-              --description "Unofficial mirror of ${{ matrix.src }} — not affiliated with upstream"
+              --description "Unofficial mirror · auto-synced by github.com/${{ github.repository }} · not affiliated with upstream"
           fi
           # Mirrored upstreams carry their own .github/workflows/*.yml. We push
           # those verbatim (the App has workflows:write), but they are NOT ours to
@@ -158,10 +158,14 @@ jobs:
             -f "names[]=mirror" -f "names[]=unofficial-mirror" >/dev/null
           # Point the repo's "Website" field (homepage) at the upstream source
           # URL, so the About box shows a clickable link back to the real repo
-          # (the description text isn't a link). Idempotent PATCH, run every sync.
-          echo "Setting homepage to upstream source ${{ matrix.src }}"
+          # (the description text isn't a link). Also (re)set the description so
+          # it stops duplicating the homepage URL and instead tells visitors the
+          # mirror is auto-maintained by this open-source project. Idempotent
+          # PATCH, run every sync — backfills repos created before this changed.
+          echo "Setting homepage + description on ${{ matrix.dst }}"
           gh api -X PATCH "repos/${{ matrix.dst }}" \
-            -f "homepage=${{ matrix.src }}" >/dev/null
+            -f "homepage=${{ matrix.src }}" \
+            -f "description=Unofficial mirror · auto-synced by github.com/${{ github.repository }} · not affiliated with upstream" >/dev/null
 
       - name: Push mirror (branches + tags, pruned)
         env:

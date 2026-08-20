@@ -6,6 +6,14 @@ No external server, no long-lived credentials, no manual upkeep.
 A single daily workflow reads a config file, and for each listed repository
 pulls from upstream and pushes an exact copy into a GitHub repo of your own.
 
+> **About this project.** Most of the implementation here was written with the
+> help of an LLM. The entire mirroring process is open source and runs
+> automatically in GitHub Actions — the config, the workflow, and every step it
+> takes are visible in this repo and reproducible by anyone. The goal is to keep
+> ongoing hand-maintenance to a minimum and to avoid depending on opaque,
+> external mirror mechanisms whose behavior you can't inspect or control, which
+> are a recurring source of instability.
+
 ## How it works
 
 Each line in [`mirrors.txt`](./mirrors.txt) maps a source repo to a destination:
@@ -73,8 +81,12 @@ importer — there's no API or settings page to set it on a repo we push to
 ourselves. The closest self-serve signal is repo topics, so the sync step tags
 each destination with `mirror` + `unofficial-mirror` (`PUT /repos/{dst}/topics`,
 idempotent, run every sync), sets the repo's Website field (`homepage`) to the
-upstream source URL so the About box links back to the real repo, and keeps the
-`Unofficial mirror of …` description. We never write our own files into a
+upstream source URL so the About box links back to the real repo, and sets a
+description that names this project as the automated maintainer instead of
+repeating the homepage URL (`Unofficial mirror · auto-synced by
+github.com/<owner>/<repo> · not affiliated with upstream`). The homepage and
+description PATCH is idempotent and runs every sync, so existing mirrors are
+backfilled with the current wording. We never write our own files into a
 destination — it stays an exact copy of upstream — so the mirror signal lives in
 metadata, not in the tree.
 
@@ -152,3 +164,10 @@ subsequent runs are incremental and finish in minutes.
 - All mirrors are unofficial and not affiliated with their upstreams.
 - The workflow only pushes to the destination repos, never to this hub, so the
   hub's own contents are always safe.
+
+## License
+
+This hub's own code — the workflow, config, and docs — is released under the
+[MIT License](./LICENSE). The license covers only this repository. Each
+mirrored repository retains the license of its upstream project; mirroring does
+not relicense anyone's code.
