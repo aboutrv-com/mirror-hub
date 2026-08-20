@@ -1,5 +1,11 @@
 # mirror-hub
 
+[![Mirror sync](https://github.com/aboutrv-com/mirror-hub/actions/workflows/sync.yml/badge.svg)](https://github.com/aboutrv-com/mirror-hub/actions/workflows/sync.yml)
+[![Mirrors](https://img.shields.io/badge/mirrors-6-brightgreen)](./mirrors.txt)
+[![Sync cadence](https://img.shields.io/badge/sync-daily-blue)](#daily-cadence)
+[![Maintained by GitHub Actions](https://img.shields.io/badge/maintained%20by-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)](./.github/workflows/sync.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
+
 Automated, self-maintaining Git mirrors, powered entirely by GitHub Actions.
 No external server, no long-lived credentials, no manual upkeep.
 
@@ -13,6 +19,20 @@ pulls from upstream and pushes an exact copy into a GitHub repo of your own.
 > ongoing hand-maintenance to a minimum and to avoid depending on opaque,
 > external mirror mechanisms whose behavior you can't inspect or control, which
 > are a recurring source of instability.
+
+## Mirrors
+
+| Mirror | Upstream source |
+| --- | --- |
+| [`aboutrv-com/dejagnu`](https://github.com/aboutrv-com/dejagnu) | [git.savannah.gnu.org/dejagnu](https://git.savannah.gnu.org/git/dejagnu.git) |
+| [`aboutrv-com/binutils-gdb`](https://github.com/aboutrv-com/binutils-gdb) | [sourceware.org/binutils-gdb](https://sourceware.org/git/binutils-gdb.git) |
+| [`aboutrv-com/glibc`](https://github.com/aboutrv-com/glibc) | [sourceware.org/glibc](https://sourceware.org/git/glibc.git) |
+| [`aboutrv-com/newlib-cygwin`](https://github.com/aboutrv-com/newlib-cygwin) | [sourceware.org/newlib-cygwin](https://sourceware.org/git/newlib-cygwin.git) |
+| [`aboutrv-com/musl`](https://github.com/aboutrv-com/musl) | [git.musl-libc.org/musl](https://git.musl-libc.org/git/musl) |
+| [`aboutrv-com/gcc`](https://github.com/aboutrv-com/gcc) | [gcc.gnu.org/gcc](https://gcc.gnu.org/git/gcc.git) |
+
+The source of truth is [`mirrors.txt`](./mirrors.txt); this table is a
+human-readable snapshot of it.
 
 ## How it works
 
