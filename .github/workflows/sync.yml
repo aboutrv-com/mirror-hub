@@ -332,6 +332,8 @@ jobs:
     needs: sync
     if: always() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push the activity commit back to this repo
     steps:
       - uses: actions/checkout@v7
         with:
